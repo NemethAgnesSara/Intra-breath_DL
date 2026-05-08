@@ -1,0 +1,18 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "IB_attention"
+authors = [{ name = "Gyorgy Kalmar", email = "gyooorey@gmail.com" }, { name = "Sara Nemeth", email = "nemetha@inf.u-szeged.hu" }]
+description = "Attention to respiratory mechanics: a deep CNN approach"
+readme = "README.md"
+license = { text = "MIT License" }
+requires-python = ">=3.10"
+classifiers = ["License :: OSI Approved :: MIT License"]
+dependencies = ["click", "numpy", "matplotlib", "scipy", "torch", "pytest", "pydantic", "pandas", "torchvision", "tensorboard", "grad-cam","plotly", "opencv-python", "seaborn", "shapely", "torchinfo"]
+version = "0.1.0"
+keywords = ["attention", "respiratory", "deep learning", "CNN"]
+
+[project.scripts]
+IB_attention = "IB_attention.cli:cli"
