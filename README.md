@@ -44,7 +44,7 @@ The dataset contains measurements from 872 patients, yielding over 39,000 indivi
 
 ```bash
 git clone https://github.com/NemethAgnesSara/Intra-breath_DL.git
-cd Intra-breath_DL
+cd IB_DL
 
 ```
 
@@ -52,7 +52,7 @@ cd Intra-breath_DL
 This project was built using PyTorch. Ensure you have a CUDA-capable environment if you intend to train on a GPU.
 
 ```bash
-pip install torch torchvision pandas numpy matplotlib plotly torchinfo
+pip install -e .
 
 ```
 
