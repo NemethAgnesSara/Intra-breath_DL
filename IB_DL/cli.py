@@ -3,24 +3,18 @@ import os
 from typing import Optional
 import click
 from sympy import S
-from IB_attention.train import train
-from IB_attention.eval import evaluate, init_logreaders, load_model, calculate_detailed_csv
-from IB_attention.datasets import IBDataset, init_dataset
+from IB_DL.train import train
+from IB_DL.eval import evaluate, init_logreaders, load_model, calculate_detailed_csv
+from IB_DL.datasets import IBDataset, init_dataset
 import numpy as np
-from IB_attention.config import PathsConfig
+from IB_DL.config import PathsConfig
 from torchvision.transforms import v2  # type: ignore
-import IB_attention.transformations as transformations
+import IB_DL.transformations as transformations
 import torch
 from pathlib import Path
 import importlib
 import inspect
-import IB_attention.experiments.batch_size_exp.config as batch_exp
-import IB_attention.experiments.linewidth_exp.config as lw_exp
-import IB_attention.experiments.pixel_exp.config as px_exp
-import IB_attention.utils as utils
-import IB_attention.experiments.worker_exp.config as worker_exp
-import IB_attention.experiments.default_exp.config as default_exp_config
-import IB_attention.experiments.default_config as default_config
+import IB_DL.experiments.default_config as default_config
 import sys
 import shlex
 
@@ -29,30 +23,6 @@ import shlex
 @click.version_option()
 def cli():
     pass
-
-
-@click.option('--data-path', default=None, help='Path to the training data')
-@cli.command()
-def data_load_example(data_path: Optional[str | Path]):
-    """Example of loading dataset.
-    """
-    cfg = PathsConfig()
-    if data_path is None:
-        data_path = cfg.data_dir
-    click.echo("MEDIAN transformations used:")
-    ib_dataset = IBDataset([os.path.join(data_path, i) for i in [
-        "all_measurements_1.csv", "all_measurements_2.csv", "all_measurements_3.csv"]],
-        transform=v2.Compose([transformations.LoopToTensor()]),
-        target_transform=None, num_of_rows=200, loop_set=True)
-    click.echo(f"Number of pateints: {len(ib_dataset)}")
-    click.echo(f"Classes in the dataset: {np.unique(ib_dataset.annotations)}")
-    ib_dataset.plot_histogram()
-
-    item, label = ib_dataset[0]
-    click.echo(f"First item: {item}")
-    click.echo(f"Label of the first item: {label}")
-    click.echo(f"Type of the data: {type(item)}")
-    click.echo(f"Shape of the data: {item.shape}")  # type: ignore
 
 
 @click.option('--batch-size', default=32, help='Batch size for training')
@@ -111,54 +81,10 @@ def visualize_batch(
 def run_experiment(name: str):
     try:
         exp_module = importlib.import_module(
-            f"IB_attention.experiments.{name}.config")
+            f"IB_DL.experiments.{name}.config")
         exp_module.run_experiment()
     except ModuleNotFoundError:
         click.echo(f"Experiment '{name}' not found.")
-
-
-@click.option(
-    '--epochs', multiple=True, type=int, default=[2],
-    help='Number of epochs (can specify multiple times for a list)')
-@click.option(
-    '--model', multiple=True, default=["resnet18_pretrained"],
-    help='Model(s) to use for training (can specify multiple times for a list)')
-@click.option(
-    '--num_workers', multiple=True, type=int, default=[0],
-    help="Number(s) of workers for data loading (can specify multiple times for a list)")
-@click.option(
-    '--persistent_workers', multiple=True, type=bool, default=[False],
-    help="Use persistent workers for data loading (can specify multiple times for a list)")
-@click.option(
-    '--prefetch_factor', multiple=True, type=int, default=[None],
-    help="Prefetch factor(s) for data loading (can specify multiple times for a list)")
-@click.option('--all-measurements', is_flag=True, default=True,
-              help="Use all measurements (default: True)")
-@click.option('--num-rows', type=int, default=None,
-              help="Number of rows to use from the dataset (default: None)")
-@cli.command()
-def num_worker_experiment(
-        epochs, model, num_workers, persistent_workers, prefetch_factor,
-        all_measurements, num_rows):
-    def unpack(val):
-        return val[0] if len(val) == 1 else list(val)
-    inpt_dict = {
-        "epochs": unpack(epochs),
-        "model": unpack(model),
-        "num_workers": unpack(num_workers),
-        "persistent_workers": unpack(persistent_workers),
-        "prefetch_factor": unpack(prefetch_factor),
-        "all_measurements": all_measurements,
-        "num_rows": num_rows
-    }
-    inpt_dict['experiment_date'] = str(
-        date.today().isoformat()) + "_" + str(datetime.now().strftime('%H-%M-%S'))
-    worker_exp.run_experiment(inpt_params=inpt_dict)
-    log_dir = os.path.join(os.path.dirname(
-        worker_exp.__file__), inpt_dict['experiment_date'])
-    log_names = [os.path.join(log_dir, f)
-                 for f in os.listdir(log_dir) if f.endswith('.log')]
-    evaluate(log_names)  # type: ignore
 
 
 def get_default_config_params():
@@ -231,7 +157,7 @@ def default_experiment(name, exp_date, eval_mode, log_info, **kwargs):
         else:
             filtered_inpt_dict['experiment_date'] = exp_date
         exp_module = importlib.import_module(
-            f"IB_attention.experiments.{name}.config")
+            f"IB_DL.experiments.{name}.config")
         log_names = exp_module.run_experiment(inpt_params=filtered_inpt_dict)
         if eval_mode:
             click.echo("Running evaluation on the experiment results...")
@@ -280,7 +206,7 @@ def continue_train(name, log_path, eval_mode, log_info):
         reader = logreaders[0]
 
         exp_module = importlib.import_module(
-            f"IB_attention.experiments.{name}.config")
+            f"IB_DL.experiments.{name}.config")
         log_names = exp_module.run_experiment(
             inpt_params=reader.params, resume=True)
         if eval_mode:

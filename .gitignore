@@ -149,13 +149,13 @@ events.out.tfevents.*
 
 *cm.pdf
 
-IB_attention/data/images/
-IB_attention/local_debug.py
+IB_DL/data/images/
+IB_DL/local_debug.py
 
 
 
 **/command_history.**
 command_history.txt
-IB_attention/data/helpers/*
+IB_DL/data/helpers/*
 
 B_attention/experiments/dashUI/*.html

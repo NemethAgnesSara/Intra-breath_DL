@@ -12,10 +12,8 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from torch.utils.data import WeightedRandomSampler
 
-from IB_attention.utils import seed_worker, store_raw_data, MEASURENT_FILES
-from IB_attention.transformations import MedianLoops
+from IB_DL.utils import seed_worker,  MEASURENT_FILES
 from torchvision.transforms import v2
-from IB_attention.transformations import build_transformations
 
 
 class Loop:
@@ -46,6 +44,14 @@ class Loop:
 
 
 class IBDataset(Dataset[tuple[Loop, str]]):
+    """
+    A custom PyTorch Dataset for handling respiratory loops.
+
+    This dataset can operate in two modes based on `loop_set`:
+    1. Patient-level (loop_set=False): Returns lists of all loops belonging to a single patient.
+    2. Loop-level (loop_set=True): Returns individual loops as standalone samples.
+    """
+
     def __init__(self,
                  csv_file: str | Path | list[str | Path],
                  transform: Optional[Callable[[Any, Optional[dict]], Any]] = None,
@@ -62,6 +68,8 @@ class IBDataset(Dataset[tuple[Loop, str]]):
             num_of_rows (int, optional): Number of rows to read from the csv file. If None, reads all rows.
             class_labels (list[str], optional): List of class labels to map the labels in the dataset.
             loop_set (bool): If True, the dataset will be treated as a set of loops, otherwise as a set of patients.
+            test_aggregation (str): Defines how test set predictions are aggregated (e.g., "none", "median_loop").
+
         """
         if not isinstance(csv_file, list):
             csv_file = [csv_file]
@@ -70,8 +78,11 @@ class IBDataset(Dataset[tuple[Loop, str]]):
         for file in csv_file:
             df_list.append(pd.read_csv(str(file), nrows=num_of_rows))
         df = pd.concat(df_list, ignore_index=True)
-        if class_labels is not None:
 
+        # Handle label mapping
+        mapping_dict = {}
+
+        if class_labels is not None:
             assert len(class_labels) >= len(df['label'].unique())
             mapping_dict.update({i: class_labels[i]
                                 for i in range(0, len(df['label'].unique()))})
@@ -85,6 +96,8 @@ class IBDataset(Dataset[tuple[Loop, str]]):
             mapping_dict = {
                 0: "healty", 1: "COPD", 2: "ILD"}
             df['label'] = df['label'].map(mapping_dict)
+
+        # Group raw dataframe rows into structured Loop objects organized by patient
         self.patient_loops, self.annotations = IBDataset.create_loops(
             df, df["label"])
         self.transform: Optional[Callable[[
@@ -93,13 +106,11 @@ class IBDataset(Dataset[tuple[Loop, str]]):
             Any, Optional[dict]], Any]] = target_transform
         self.loop_set = loop_set
         self.test_aggregation = test_aggregation
-        if loop_set and self.transform is not None and isinstance(self.transform, list):
-            assert not any(
-                isinstance(t, dict) and t.get("name") == "MedianLoops"
-                for t in self.transform
-            ), "If loop_set is True, transform list cannot contain Median Loops transformation."
+
         self.extra_params = {}
         self.train_indices: Optional[Sequence[int]] = None
+
+        # Pre-calculate dataset statistics and flatten structure if needed
         self.get_info()
         self.create_loop_dataset()
 
@@ -154,7 +165,6 @@ class IBDataset(Dataset[tuple[Loop, str]]):
         Returns:
             List[str]: Class labels in the dataset.
         """
-        # print("Number of classes in the dataset:", len(self.class_labels))
         return len(self.class_labels)
 
     def get_info(self):
@@ -249,6 +259,8 @@ class IBDataset(Dataset[tuple[Loop, str]]):
         self.loop_to_patient = loop_to_patient
 
     def creat_dataset_from_indices(self, indices: Sequence[int]) -> "IBDataset":
+        from IB_DL.transformations import MedianLoops
+
         # Select the patient_loops and annotations for the given indices
         subset_patient_loops = [self.patient_loops[i] for i in indices]
         subset_annotations = [self.annotations[i] for i in indices]
@@ -389,12 +401,15 @@ class IBDataset(Dataset[tuple[Loop, str]]):
         patient_labels = [labels.loc[patient_groups[id][0]]
                           for id in pd.unique(df['id'])]
 
-        patients = [
-            [Loop(row['id'], row['index'], [row.iloc[i] for i in range(3, 53)], [row.iloc[i] for i in range(53, 103)],
-                  [row.iloc[i] for i in range(103, 153)], [row.iloc[i] for i in range(153, 203)])
-             for _, row in group.iterrows()]
-            for _, group in df.groupby('id')
-        ]  
+        patients = [[
+            Loop(
+                row['id'],
+                row['index'],
+                [row.iloc[i] for i in range(3, 53)],
+                [row.iloc[i] for i in range(53, 103)],
+                [row.iloc[i] for i in range(103, 153)],
+                [row.iloc[i] for i in range(153, 203)]) for _,
+            row in group.iterrows()] for _, group in df.groupby('id')]
         return patients, np.array(patient_labels)
 
     @staticmethod
@@ -425,6 +440,8 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
     Returns:
         tuple[DataLoader, DataLoader, DataLoader] : DataLoader for train (70%), validation(10%) and test (20%), and the full dataset to get its properties.
     """
+    from IB_DL.transformations import build_transformations
+
     ib_dataset = None
     file_path: str | Path | list[str | Path] = ""
     if params["all_measurements"]:
@@ -450,7 +467,7 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
         ttv_ratio=params["ttv_ratio"])
 
     data_loaders = []
-    subset_targets = [data_subsets[0].dataset.all_annotations[idx]
+    subset_targets = [data_subsets[0].dataset.all_annotations[idx]  # type: ignore
                       for idx in data_subsets[0].indices]
     unique_classes = sorted(list(set(subset_targets)))
     class_to_idx = {cls_name: i for i, cls_name in enumerate(unique_classes)}
@@ -460,7 +477,7 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
     class_weights = torch.tensor(class_weights, dtype=torch.float)
     sample_weights = [class_weights[class_to_idx[t]] for t in subset_targets]
     sample_weights = torch.tensor(sample_weights, dtype=torch.float)
-    sampler = WeightedRandomSampler(weights=sample_weights,
+    sampler = WeightedRandomSampler(weights=sample_weights,  # type: ignore
                                     num_samples=len(sample_weights),
                                     replacement=True)
     g = torch.Generator()
@@ -468,7 +485,7 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
 
     data_loaders.append(DataLoader(data_subsets[0],
                                    batch_size=params["batch_size"],
-                                   shuffle=True,
+                                   shuffle=False,
                                    sampler=sampler,
                                    num_workers=params["num_workers"],
                                    persistent_workers=params["persistent_workers"],

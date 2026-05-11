@@ -11,7 +11,7 @@ import numpy as np
 import os
 import pandas as pd
 
-from IB_attention.logger import LogReader
+from IB_DL.logger import LogReader
 
 ### GLOBAL VARIABLES ###
 LOG_LEVEL = "INFO"
@@ -243,24 +243,6 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def store_raw_data(params):
-    global raw_df
-    if raw_df is None:
-        if params["all_measurements"]:
-            file_paths = [os.path.join(
-                params["data_dir"],
-                f"all_measurements_{i}.csv") for i in [1, 2, 3]]
-        else:
-            file_paths = [os.path.join(params["data_dir"], "loops_filtered.csv")]
-
-        df_list = []
-        for path in file_paths:
-            df_list.append(pd.read_csv(path, nrows=params.get("num_rows")))
-
-        raw_df = pd.concat(df_list, ignore_index=True)
-    return raw_df.copy()
-
-
 def check_param_compatibility(params: dict):
     if params["model"] == "baseline" and {
             "name": "Grayscale"} != params["transformations"][
@@ -404,7 +386,7 @@ def print_epoch(
 def visualize_tensor_data(
         train_features: torch.FloatTensor, train_labels: tuple[str],
         flattened: bool = True,
-        save_path: str = "IB_attention/images/batch_tensor_visualization.png"):
+        save_path: str = "IB_DL/images/batch_tensor_visualization.png"):
     """Visualizes a batch of data by their labels.
 
     Args:
@@ -442,13 +424,13 @@ def visualize_tensor_data(
             ax[label_codes[key]].set_title(key)
     plt.tight_layout()
     plt.savefig(save_path)
-    print("The result is saved in IB_attention/images/batch_tensor_visualization.png")
+    print("The result is saved in IB_DL/images/batch_tensor_visualization.png")
 
 
 def visualize_image_data(
         image_batch: torch.Tensor,
         labels: Sequence[str],
-        save_path: str = "IB_attention/images/batch_visualization_image.png"):
+        save_path: str = "IB_DL/images/batch_visualization_image.png"):
     """Visualizes each image in a batch individually in subplots.
 
     Args:
@@ -483,7 +465,7 @@ def visualize_image_data(
 def visualize_image_data_per_channel(
     image_batch: torch.Tensor,
     labels: Sequence[str],
-    save_path: str = "IB_attention/images/batch_visualization_per_layer.png"
+    save_path: str = "IB_DL/images/batch_visualization_per_layer.png"
 ):
     """
     Visualizes each layer/channel of every image in the batch.
