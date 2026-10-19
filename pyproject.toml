@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "MIT License" }
 requires-python = ">=3.10"
 classifiers = ["License :: OSI Approved :: MIT License"]
-dependencies = ["click", "numpy", "matplotlib", "scipy", "torch", "pytest", "pydantic", "pandas", "torchvision", "tensorboard", "grad-cam","plotly", "seaborn",  "torchinfo"]
+dependencies = ["click", "numpy", "matplotlib", "scipy", "torch", "pytest", "pydantic", "pandas", "torchvision", "tensorboard", "grad-cam","plotly", "seaborn",  "torchinfo", "scikit-learn"]
 version = "0.1.0"
 keywords = ["attention", "respiratory", "deep learning", "CNN"]
 

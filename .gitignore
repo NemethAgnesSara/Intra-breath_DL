@@ -159,3 +159,10 @@ command_history.txt
 IB_DL/data/helpers/*
 
 B_attention/experiments/dashUI/*.html
+
+# experiment outputs, checkpoints and downloaded data
+IB_DL/experiments/*/result/
+IB_DL/SIN_QD/result/
+IB_DL/data/*.csv
+IB_DL/data/QuickDraw/
+IB_DL/IBOsc/

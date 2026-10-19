@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from PIL import Image, ImageDraw
 from matplotlib import pyplot as plt
 import torch
 from torchvision.transforms import v2
@@ -269,6 +270,164 @@ class ToImage(TensorTransforms):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(absolute scale={self.abs_scale})"
+
+
+class ToImagePIL(TensorTransforms):
+    def __init__(self,
+                 img_size: int = 128,
+                 linewidth: int = 2,
+                 gradient: bool = False,
+                 img_channels: list[str] = ["f;abs", "f;abs", "f;abs"],
+                 num_skips: int = 0,
+                 max_len_skips: int = 0):
+        super().__init__()
+        self.img_size = img_size
+        self.linewidth = linewidth
+        self.gradient = gradient
+        self.img_channels = img_channels
+        self.num_skips = num_skips
+        self.max_len_skips = max_len_skips
+
+    def __call__(self, inpt: Any, *args: Any, **kwargs: Any) -> Any:
+        if not args[0]["augment"]:
+            num_skips = 0
+            max_len_skips = 0
+        else:
+            num_skips = self.num_skips
+            max_len_skips = self.max_len_skips
+
+        args[0]["fsclae"] = (torch.max(inpt[[0], :])-torch.min(inpt[[0], :])
+                             )/(utils.F_MAX-utils.F_MIN)  # todo add scales
+        args[0]["vsclae"] = (torch.max(inpt[[1], :])-torch.min(inpt[[1], :])
+                             )/(utils.V_MAX-utils.V_MIN)  # todo add scales
+        args[0]["rsclae"] = (torch.max(inpt[[2], :])-torch.min(inpt[[2], :])
+                             )/(utils.R_MAX-utils.R_MIN)  # todo add scales
+        args[0]["xsclae"] = (torch.max(inpt[[3], :])-torch.min(inpt[[3], :])
+                             )/(utils.X_MAX-utils.X_MIN)  # todo add scales
+
+        pos_mask = inpt[0, :] > 0
+        neg_mask = inpt[0, :] < 0
+        pos_mean = inpt[2, pos_mask].mean() if pos_mask.any() else 0
+        neg_mean = inpt[2, neg_mask].mean() if neg_mask.any() else 0
+        args[0]["rrotation"] = (pos_mean - neg_mean)
+        pos_mean = inpt[3, pos_mask].mean() if pos_mask.any() else 0
+        neg_mean = inpt[3, neg_mask].mean() if neg_mask.any() else 0
+        args[0]["xrotation"] = (pos_mean - neg_mean)
+
+        # empty black canvas
+        my_canvas = torch.zeros(
+            (len(self.img_channels), self.img_size, self.img_size), dtype=torch.float32)
+
+        for idx, channel in enumerate(self.img_channels):
+
+            # Create a 1-channel grayscale PIL image for fast, direct drawing
+            pil_canvas = Image.new(
+                "L", (self.img_size, self.img_size), color=0)
+            draw = ImageDraw.Draw(pil_canvas)
+
+            if channel.split(';')[0] == 'f':
+                x_min = utils.F_MIN
+                x_max = utils.F_MAX
+                x_axes_data = inpt[0, :]
+            else:
+                x_min = utils.V_MIN
+                x_max = utils.V_MAX
+                x_axes_data = inpt[1, :]
+
+            if channel.split(';')[1] == 'abs':
+                y_min = utils.X_MIN
+                y_max = utils.R_MAX
+                f_scaled = self.img_size * \
+                    (x_axes_data - x_min) / (x_max-x_min)
+                r_scaled = self.img_size * (inpt[2, :] - y_min) / (y_max-y_min)
+                x_scaled = self.img_size * (inpt[3, :] - y_min) / (y_max-y_min)
+            elif channel.split(';')[1] == 'rel':
+                y_min = torch.min(inpt[[2, 3], :])
+                y_max = torch.max(inpt[[2, 3], :])
+                x_max = torch.max(x_axes_data)
+                x_min = torch.min(x_axes_data)
+                f_scaled = (x_axes_data - x_min) / \
+                    (x_max - x_min) * self.img_size
+                r_scaled = (inpt[2, :] - y_min) / \
+                    (y_max - y_min) * self.img_size
+                x_scaled = (inpt[3, :] - y_min) / \
+                    (y_max - y_min) * self.img_size
+            elif channel.split(';')[1] == 'zc':
+                x_diff = torch.max(torch.abs(x_axes_data))
+                y_diff = torch.max(torch.abs(inpt[[2, 3], :]))
+                f_scaled = x_axes_data * \
+                    (self.img_size / 2 / x_diff) + self.img_size / 2
+                r_scaled = inpt[2, :] * \
+                    (self.img_size / 2 / y_diff) + self.img_size / 2
+                x_scaled = inpt[3, :] * \
+                    (self.img_size / 2 / y_diff) + self.img_size / 2
+            else:
+                raise ValueError(f"Unknown layer type: {channel}")
+
+            r_points = torch.stack((f_scaled, r_scaled), dim=1)
+            x_points = torch.stack((f_scaled, x_scaled), dim=1)
+            keypoints = torch.stack(
+                (r_points, x_points)).round().to(torch.int32)
+
+            r_connections = [(i, i+1) for i in range(len(r_points) - 1)]
+            r_connections.append((len(r_points) - 1, 0))
+            x_connections = [(i, i+1) for i in range(len(x_points) - 1)]
+            x_connections.append((len(x_points) - 1, 0))
+            my_connections = r_connections + x_connections
+
+            visibility = torch.ones(keypoints.shape[:2], dtype=torch.bool)
+            for i in range(keypoints.shape[0]):
+                for j in range(keypoints.shape[1]):
+                    x, y = keypoints[i, j]
+                    x, y = x.item(), y.item()
+                    if x < 0 or x >= self.img_size or y < 0 or y >= self.img_size:
+                        visibility[i, j] = False
+
+            skip_starts = np.random.randint(
+                0, keypoints.shape[0]+keypoints.shape[1], num_skips)
+            for skip_start in skip_starts:
+                skip_end = skip_start + np.random.randint(1, max_len_skips + 1)
+                channel_len = keypoints.shape[1]
+                if skip_start < channel_len:
+                    indices = np.arange(skip_start, skip_end) % channel_len
+                    visibility[0, indices] = False
+                else:
+                    indices = np.arange(
+                        skip_start - channel_len, skip_end - channel_len) % channel_len
+                    visibility[1, indices] = False
+
+            for i, (start_idx, end_idx) in enumerate(my_connections):
+                channel_idx = 0 if i < len(r_connections) else 1
+
+                if visibility[channel_idx, start_idx] and visibility[channel_idx, end_idx]:
+                    pt1 = keypoints[channel_idx, start_idx].tolist()
+                    pt2 = keypoints[channel_idx, end_idx].tolist()
+
+                    if self.gradient:
+                        # Direct integer gray value for a 1-channel PIL image
+                        gray_val = int(max(0, 255 - (3 * start_idx)))
+                    else:
+                        gray_val = 255
+
+                    # Draw the line natively on the PIL canvas
+                    draw.line(
+                        [(pt1[0], pt1[1]), (pt2[0], pt2[1])],
+                        fill=gray_val,
+                        width=self.linewidth
+                    )
+
+            # Convert the 2D PIL image directly to a normalized float tensor
+            tmp_tensor = torch.from_numpy(
+                np.array(pil_canvas)).to(torch.float32) / 255.0
+            my_canvas[idx, :, :] = tmp_tensor
+
+        # Flip vertically (height axis)
+        my_canvas = torch.flip(my_canvas, dims=[1])
+
+        return my_canvas, *args
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(absolute scale={getattr(self, 'abs_scale', None)})"
 
 
 class FlattenTensor(TensorTransforms):
@@ -553,6 +712,17 @@ def build_transformations(params: Dict) -> v2.Compose:
             transform_objs.append(MedianLoops())
         elif t["name"] == "LoopToTensor":
             transform_objs.append(LoopToTensor())
+        elif t["name"] == "ToImage" and "gradient" in t:
+            # Temporal-encoding experiments (gradient, gradient_channels) were
+            # rendered with the PIL renderer, in both their gradient on and off arms.
+            transform_objs.append(ToImagePIL(
+                img_size=t["img_size"],
+                linewidth=t["linewidth"],
+                img_channels=t["img_channels"],
+                num_skips=t.get("num_skips", 0),
+                max_len_skips=t.get("max_len_skips", 0),
+                gradient=t["gradient"]
+            ))
         elif t["name"] == "ToImage":
             transform_objs.append(ToImage(
                 img_size=t["img_size"],
@@ -607,6 +777,18 @@ def build_transformations(params: Dict) -> v2.Compose:
             ))
         elif t["name"] == "AddScale":
             transform_objs.append(AddScale())
+        # Handcrafted-feature transforms (Table 6) live in the optional IBOsc package
+        elif t["name"] == "ToMeasurements":
+            transform_objs.append(utils.import_ibosc("IBtransforms").ToMeasurements(
+                only_first_measurement=t.get("only_first_measurement", True),
+                outlier_detection=t.get("outlier_detection", True)))
+        elif t["name"] == "LoopToIBFeatures":
+            transform_objs.append(utils.import_ibosc("IBtransforms").LoopToIBFeatures(
+                t["feature_selector"], t["measurement"]))
+            print(f"Using handcrafted features")
+        elif t["name"] == "Standardization":
+            transform_objs.append(utils.import_ibosc("IBtransforms").Standardization(
+                t["mean"], t["std"]))
         else:
             raise ValueError(f"Unknown transformation: {t['name']}")  # type: ignore
 

@@ -58,7 +58,8 @@ def get_model(params: Dict) -> nn.Module:
 
     def load_qd_checkpoint(arch_fn, pt_filename):
         """Loads a specific QD pre-trained checkpoint and handles layer replacement."""
-        base_path = "/home/sacz/projects/IB_DL/IB_DL/other_papers/result/"
+        # Checkpoints written by SIN_QD/quick_draw.py
+        base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SIN_QD", "result")
         full_path = os.path.join(base_path, pt_filename)
 
         if not os.path.exists(full_path):
@@ -147,6 +148,25 @@ def get_model(params: Dict) -> nn.Module:
             base_channels_per_input=params.get("base_channels", 2),
         )
 
+    elif 'modified_resnet' in model_name:
+        # Determine the base architecture from params
+        if 'resnet50' in model_name:
+            arch = resnet50
+        elif 'resnet34' in model_name:
+            arch = resnet34
+        else:
+            arch = resnet18
+
+        # Instantiate the model (with or without pre-trained weights)
+        nn_model = arch(weights=weights_enum)
+
+        # Patch the first convolution layer to accept your specific in_channels
+        nn_model = modify_resnet_input_channels(
+            nn_model, in_channels=in_channels)
+
+        # Replace the final fully connected layer for your target classes
+        replace_last_fc_layer(nn_model=nn_model, class_labels=class_labels)
+
     # Standard ResNet Architectures (ImageNet weights)
     elif any(x in model_name for x in ['resnet50', 'resnet34', 'resnet18']) and 'QD' not in model_name and 'SIN' not in model_name:
         # Standard ResNet backbones (50, 34, 18). Good general purpose image extractors.
@@ -234,16 +254,16 @@ def get_model(params: Dict) -> nn.Module:
         params['qd'] = True
         # Models pre-trained on custom QuickDraw data, and the trained model might be pretrained on imagenet.
         if 'resnet50' in model_name and 'pretrained' in model_name:
-            fname = "QD_resnet50_pretrained_log__2025-11-25.pt"
+            fname = "QD_resnet50_pretrained.pt"
             arch_fn = resnet50
         elif 'resnet50' in model_name and 'pretrained' not in model_name:
-            fname = "QD_resnet50_log__2025-11-25.pt"
+            fname = "QD_resnet50.pt"
             arch_fn = resnet50
         elif 'resnet18' in model_name and 'pretrained' in model_name:
-            fname = "QD_resnet18_pretrained_log__2025-11-25.pt"
+            fname = "QD_resnet18_pretrained.pt"
             arch_fn = resnet18
         elif 'resnet18' in model_name and 'pretrained' not in model_name:
-            fname = "QD_resnet18_log__2025-11-25.pt"
+            fname = "QD_resnet18.pt"
             arch_fn = resnet18
         else:
             raise ValueError(f"Unknown QD model configuration: {model_name}")
@@ -1269,3 +1289,47 @@ class DepthSepSqueezeExciteNet(nn.Module):
         x = self.features(x)
         x = torch.flatten(x, 1)
         return self.classifier(x)
+
+
+def modify_resnet_input_channels(model: nn.Module, in_channels: int):
+    """
+    Modifies the first conv layer of a ResNet to accept arbitrary channels.
+    If pre-trained weights are present, it copies the average weights across 
+    the new channels (for BW/1-channel) or initializes them.
+    """
+    if in_channels == 3:
+        return model
+
+    old_conv = model.conv1
+
+    # Create the new convolution layer matching your input channels
+    new_conv = nn.Conv2d(
+        in_channels=in_channels,
+        out_channels=old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=old_conv.bias is not None
+    )
+
+    # Smart weight initialization if you are using pre-trained weights
+    with torch.no_grad():
+        if in_channels == 1:
+            # For 1-channel (grayscale), sum/average the RGB weights
+            new_conv.weight.copy_(old_conv.weight.sum(dim=1, keepdim=True))
+        else:
+            # For multi-channel (e.g., 4 channels), reuse RGB for the first 3
+            # and initialize the remaining channels
+            if in_channels == 2:
+                # For 2-channel inputs, copy the first two RGB channel weights
+                new_conv.weight[:, :2].copy_(old_conv.weight[:, :2])
+            else:
+                new_conv.weight[:, :3].copy_(old_conv.weight)
+            if in_channels > 3:
+                # Initialize extra channels with the average of the RGB weights
+                avg_weight = old_conv.weight.mean(dim=1, keepdim=True)
+                for i in range(3, in_channels):
+                    new_conv.weight[:, i:i+1].copy_(avg_weight)
+
+    model.conv1 = new_conv
+    return model

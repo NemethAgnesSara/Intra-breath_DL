@@ -15,7 +15,7 @@ import seaborn as sns
 import pandas as pd
 from IB_DL import datasets
 from IB_DL.config import PathsConfig
-from IB_DL.utils import STYLE_DICT, STYLE_DICT_DARK, VDOT_LABEL, ZRS_LABEL, calculate_f1
+from IB_DL.utils import STYLE_DICT, STYLE_DICT_DARK, VDOT_LABEL, ZRS_LABEL, calculate_f1, import_ibosc
 import matplotlib.colors as colors
 import itertools
 import math
@@ -1216,6 +1216,112 @@ def plot_lw_plot2(experiment_path: str):
     plt.close()
 
 
+def plot_lw_plot_single_column(experiment_path: str,
+                               output_name: str = "lw_single_column.pdf"):
+    """``plot_lw_plot2`` compressed to one IEEE column (3.5in).
+
+    Same layout as the wide version -- four consecutive blocks of seven
+    resolutions, one block per model -- only scaled down to fit a single
+    column. A panel needs 28 point slots plus the gaps between blocks, so at
+    this width everything that costs horizontal room is trimmed: the gap
+    between blocks is 0.6 of a slot rather than a whole one, the markers and
+    caps shrink, and the tick labels drop to 5pt, which is still legible for
+    single digits.
+    """
+    init_plt()
+
+    df = pd.read_csv(f"{experiment_path}/test_results.csv")
+    df['model'] = df['model_label'].str.split('_').str[3]
+    df['lw'] = df['model_label'].str.split('_').str[1].astype(int)
+    df.sort_values(by=['model', 'lw'], inplace=True)
+    df['lw_rank'] = df.groupby('model')['lw'].rank(method='dense').astype(int)
+
+    aggregation_types = ["loop_wise", "majority_vote", "median_loop"]
+    unique_models = list(df['model'].unique())
+    color_map = {m: STYLE_DICT[i % 80]['color']
+                 for i, m in enumerate(unique_models)}
+    dark_color_map = {m: STYLE_DICT_DARK[i % 80]['color']
+                      for i, m in enumerate(unique_models)}
+
+    model_nameing_dict = {
+        "resnet50": "ResNet-50", "efficientnet": "EfficientNet-B1",
+        "linearcnn": "Model B", "flexicnn": "Model A",
+        "efficientnet_b4": "EfficientNet-B4", "efficientnet_b5": "EfficientNet-B5",
+        "efficientnet_b6": "EfficientNet-B6", "efficientnet_b7": "EfficientNet-B7",
+    }
+
+    GAP = 0.6  # between model blocks, in slot widths
+
+    fig, axes = plt.subplots(3, 1, figsize=(COLUMN_WIDTH_INCHES, 3.9),
+                             sharex=True, gridspec_kw={'hspace': 0.28})
+
+    for agg_idx, agg_type in enumerate(aggregation_types):
+        df_subset = df[df['aggregation_method'] == agg_type]
+        ax = axes[agg_idx]
+
+        x_pos = 0.0
+        all_x_ticks, all_x_labels = [], []
+
+        for model in unique_models:
+            model_subset = df_subset[df_subset['model'] == model]
+            start_x = x_pos
+            model_accuracies = []
+
+            for lw_rank in sorted(model_subset['lw_rank'].unique()):
+                data = model_subset[model_subset['lw_rank']
+                                    == lw_rank]['accuracy'].values
+                if len(data) == 0:
+                    continue
+                ax.errorbar(x_pos, np.mean(data), yerr=np.std(data), fmt='o',
+                            color=color_map[model], markersize=2.0,
+                            capsize=1.0, capthick=0.5, elinewidth=0.5,
+                            zorder=3)
+                model_accuracies.extend(data)
+                all_x_ticks.append(x_pos)
+                all_x_labels.append(lw_rank)
+                x_pos += 1
+
+            if model_accuracies:
+                ax.hlines(np.mean(model_accuracies), start_x - 0.3,
+                          x_pos - 0.7, colors=dark_color_map[model],
+                          linestyles='--', linewidth=0.6, alpha=0.9, zorder=2)
+
+            x_pos += GAP
+
+        ax.set_title(AGGREGATION_LABELS.get(agg_type, agg_type), loc='left',
+                     fontweight='bold', pad=3, family='serif', size=8)
+        ax.set_ylabel('Accuracy (%)', size=8)
+        ax.grid(axis='y', linestyle=':', alpha=0.5, linewidth=0.5)
+        ax.tick_params(axis='y', labelsize=7, length=2, pad=1.5)
+        ax.tick_params(axis='x', labelsize=5, length=1.5, pad=1.0)
+        ax.set_xlim(-0.8, x_pos - GAP - 0.2)
+        ax.set_yticks({0: [65, 70, 75], 1: [75, 80, 85],
+                       2: [70, 75, 80]}[agg_idx])
+        ax.set_xticks(all_x_ticks)
+
+    axes[-1].set_xticklabels([str(x) for x in all_x_labels])
+    axes[-1].set_xlabel(r'Resolution ($\frac{1}{128}$ pixels)',
+                        family='serif', size=8)
+
+    handles = [matplotlib.lines.Line2D([0], [0], marker='o', color='w',
+                                       markerfacecolor=color_map[m],
+                                       markersize=4.5) for m in unique_models]
+    labels = [model_nameing_dict[m] for m in unique_models]
+
+    plt.tight_layout()
+    # Anchored to the top axes, not the figure: in figure coordinates the gap
+    # to the axes shifts whenever the figure height changes.
+    axes[0].legend(handles, labels, loc='lower center',
+                   bbox_to_anchor=(0.5, 1.13), ncol=2, frameon=False,
+                   fontsize=7.5, handletextpad=0.15, columnspacing=1.2,
+                   labelspacing=0.2, borderpad=0.0)
+
+    fig_name = f"{experiment_path}/{output_name}"
+    plt.savefig(fig_name, bbox_inches='tight', dpi=300)
+    print(f"Single-column plot saved as {fig_name}")
+    plt.close()
+
+
 def plot_efficient_matrix(experiment_path: str):
     df = pd.read_csv(f"{experiment_path}/test_results.csv")
     df['version'] = df['model_label'].str.split('_').str[2]
@@ -1616,6 +1722,328 @@ def sweep_linewidts(resolution, img_size_list):
                 format='pdf', dpi=300, bbox_inches='tight')
     print("Grid plot saved as IB_DL/images/img_size-lw/ieee_one_column_grid.pdf")
     plt.close()
+
+
+def patient_illustration():
+    Patient = import_ibosc("Patient").Patient
+    median_loop = import_ibosc("general_functions").median_loop
+    # real data
+    HEALTHY_PATH = "IB_DL/data/helpers/PreBMT-010"
+    ILD_PATH = "IB_DL/data/helpers/ILD-021"
+    COPD_PATH = "IB_DL/data/helpers/C29651"
+
+    y_title = r"$\mathrm{Zrs \ (hPa \cdot s \cdot L^{-1})}$"
+    SUBFIG_TITLES = ["Healthy", "COPD", "ILD"]
+    x_label = r"$\mathrm{\dot{V} \ (L \cdot s^{-1})}$"
+    v_label = r"$\mathrm{V \ (L)}$"
+
+    init_plt()
+    patient = Patient(HEALTHY_PATH)
+    patient.combine_measurements()
+    h_loops = patient.measure[0].loops[:3]
+    all_loop_h = patient.measure[0].combine_loops()
+
+    patient = Patient(ILD_PATH)
+    patient.combine_measurements()
+    i_loops = patient.measure[0].loops[:3]
+    all_loop_i = patient.measure[0].combine_loops()
+
+    patient = Patient(COPD_PATH)
+    patient.combine_measurements()
+    c_loops = patient.measure[0].loops[:3]
+    for loop in c_loops:
+        loop.V.append(loop.V[0])
+        loop.F.append(loop.F[0])
+        loop.R.append(loop.R[0])
+        loop.X.append(loop.X[0])
+
+    all_loops = [h_loops, c_loops, i_loops]
+    all_loop_c = patient.measure[0].combine_loops()
+    all_loop_collection = [all_loop_h, all_loop_c, all_loop_i]
+
+    # Adjusted to ensure proportional math works
+    fig = plt.figure(figsize=(PAGE_WIDTH_INCHES, 4))
+
+    # FIXED: 3:1 ratio exactly matches the 3-plot vs 1-plot content.
+    gs = fig.add_gridspec(3, 4, width_ratios=[3, 1, 3, 1],
+                          height_ratios=[1.1, 1.0, 1.5],
+                          wspace=0.02, hspace=0.0)
+
+    colors = ['#FDFDFD', '#BBF5EB']
+
+    for row in range(3):
+        if row == 0:
+            top_margin, bottom_margin = 0.82, 0.05
+        elif row == 1:
+            top_margin, bottom_margin = 0.85, 0.05
+        else:
+            top_margin, bottom_margin = 0.88, 0.35
+
+        for col in range(4):
+            bg_color = colors[0] if col % 2 == 0 else colors[1]
+            subfig = fig.add_subfigure(gs[row, col])
+            subfig.set_facecolor(bg_color)
+
+            if col % 2 == 0:
+                # FIXED: Left/Right margins matched proportionally
+                subfig.subplots_adjust(
+                    left=0.15, right=0.98, bottom=bottom_margin, top=top_margin, wspace=0.0)
+                axs = subfig.subplots(1, 3, sharex=True, sharey=True)
+
+                if col == 0:
+                    subfig.suptitle(
+                        SUBFIG_TITLES[row], x=0.15, y=0.98, fontweight='bold', ha='left')
+
+                for i, ax in enumerate(axs):
+                    if col == 0:
+                        if i == 0:
+                            ax.plot(all_loop_collection[row].F, all_loop_collection[row]
+                                    .R, color='red', linewidth=1.5)
+                            ax.plot(all_loop_collection[row].F, all_loop_collection[row]
+                                    .X, color='blue', linewidth=1.5)
+                            ax.set_xlim(-1, 1)
+                        else:
+                            ax.plot(all_loops[row][i].F, all_loops[row]
+                                    [i].R, color='red', linewidth=1.5)
+                            ax.plot(all_loops[row][i].F, all_loops[row]
+                                    [i].X, color='blue', linewidth=1.5)
+                            ax.set_xlim(-1, 1)
+                    if col == 2:
+                        ax.plot(all_loops[row][i].V, all_loops[row]
+                                [i].R, color='red', linewidth=1.5)
+                        ax.plot(all_loops[row][i].V, all_loops[row]
+                                [i].X, color='blue', linewidth=1.5)
+                        ax.set_xlim(-0.5, 1)
+
+                    ax.set_ylim(-5.5, 5)
+                    ax.set_facecolor('white')
+
+                    if i == 0 and col == 0:
+                        ax.set_ylabel(y_title, fontsize=8,
+                                      fontweight='bold', labelpad=2)
+
+                    if i == 0:
+                        ax.set_yticks([-4, 0, 4])
+                        ax.set_yticklabels([-4, 0, 4], fontsize=8)
+
+                    if row < 2:
+                        ax.set_xticklabels([])
+                        if col == 0:
+                            ax.set_xticks([-0.5, 0, 0.5])
+                        else:
+                            ax.set_xticks([0, 0.5])
+                    else:
+                        if col == 0:
+                            ax.set_xticks([-0.5, 0, 0.5])
+                            ax.set_xticklabels([-0.5, 0, 0.5], fontsize=8)
+                        else:
+                            ax.set_xticks([0, 0.5])
+                            ax.set_xticklabels([0, 0.5], fontsize=8)
+
+                # if row == 2:
+                #     axs[1].set_xlabel(x_label if col ==
+                #                       0 else v_label, fontsize=9, labelpad=8)
+
+            else:
+                # FIXED: Right margin to 0.94 to balance out the 0.15 left margin above
+                subfig.subplots_adjust(
+                    left=0.06, right=0.94, bottom=bottom_margin, top=top_margin)
+                ax = subfig.subplots(1, 1)
+
+                if row == 0:
+                    subfig.suptitle('Median loop', x=0.5, y=0.98,
+                                    fontsize=11, fontweight='bold')
+
+                ml = median_loop(all_loops[row])
+
+                if col == 1:
+                    ax.plot(ml.F, ml.R, color='red', linewidth=1.5)
+                    ax.plot(ml.F, ml.X, color='blue', linewidth=1.5)
+                    ax.set_xlim(-1, 1)
+                if col == 3:
+                    ax.plot(ml.V, ml.R, color='red', linewidth=1.5)
+                    ax.plot(ml.V, ml.X, color='blue', linewidth=1.5)
+                    ax.set_xlim(-0.5, 1)
+
+                ax.set_ylim(-5.5, 5)
+                ax.set_facecolor('white')
+                ax.set_yticks([-4, 0, 4])
+                ax.set_yticklabels([], fontsize=8)
+
+                if row < 2:
+                    ax.set_xticklabels([])
+                    ax.set_xticks([0, 0.5])
+                else:
+                    if col == 1:
+                        ax.set_xticks([-0.5, 0, 0.5])
+                        ax.set_xticklabels([-0.5, 0, 0.5], fontsize=8)
+                    else:
+                        ax.set_xticks([0, 0.5])
+                        ax.set_xticklabels([0, 0.5], fontsize=8)
+
+                if row == 2:
+                    ax.set_xlabel(x_label if col == 1 else v_label,
+                                  fontsize=8, labelpad=8)
+
+    plt.savefig('IB_DL/images/patient_illustration.pdf',
+                format='pdf', dpi=300, bbox_inches='tight')
+
+
+def patient_illustration_v2():
+    Patient = import_ibosc("Patient").Patient
+    median_loop = import_ibosc("general_functions").median_loop
+    # real data
+    HEALTHY_PATH = "IB_DL/data/helpers/PreBMT-084"
+    ILD_PATH = "IB_DL/data/helpers/ILD-021"
+    COPD_PATH = "IB_DL/data/helpers/C29651"
+
+    y_title = r"$\mathrm{Zrs \ (hPa \cdot s \cdot L^{-1})}$"
+    x_label = r"$\mathrm{\dot{V} \ (L \cdot s^{-1})}$"
+    v_label = r"$\mathrm{V \ (L)}$"
+
+    init_plt()
+    nums = []
+    patient = Patient(HEALTHY_PATH, outlier_detection=False)
+    patient.combine_measurements()
+    nums.append(len(patient.measure[0].loops))
+    h_loops = patient.measure[0].loops[6:9]
+
+    patient.measure[0].loops = patient.measure[0].loops[:10]
+
+    all_loop_h = patient.measure[0].combine_loops()
+
+    patient = Patient(ILD_PATH, outlier_detection=False)
+    patient.combine_measurements()
+    nums.append(len(patient.measure[0].loops))
+    i_loops = patient.measure[0].loops[:3]
+    patient.measure[0].loops = patient.measure[0].loops[:10]
+    all_loop_i = patient.measure[0].combine_loops()
+
+    patient = Patient(COPD_PATH, outlier_detection=False)
+    patient.combine_measurements()
+    nums.append(len(patient.measure[0].loops))
+    c_loops = patient.measure[0].loops[:3]
+
+    all_loops = [h_loops, c_loops, i_loops]
+    patient.measure[0].loops = patient.measure[0].loops[:10]
+    all_loop_c = patient.measure[0].combine_loops()
+    all_loop_collection = [all_loop_h, all_loop_c, all_loop_i]
+
+    # Adjusted to ensure proportional math works
+    fig = plt.figure(figsize=(PAGE_WIDTH_INCHES, 4))
+
+    # FIXED: 3:1 ratio exactly matches the 3-plot vs 1-plot content.
+    gs = fig.add_gridspec(3, 2, width_ratios=[3,  3, ],
+                          height_ratios=[1.1, 1.0, 1.5],
+                          wspace=0.00, hspace=0.0)
+
+    bg_color = ["#F0F0F0DC", "#FEFED7"]
+
+    SUBFIG_TITLES = [f"Healthy, N={nums[0]}",
+                     f"COPD, N={nums[2]}", f"ILD, N={nums[1]}"]
+
+    for row in range(3):
+        if row == 0:
+            top_margin, bottom_margin = 0.82, 0.05
+        elif row == 1:
+            top_margin, bottom_margin = 0.85, 0.05
+        else:
+            top_margin, bottom_margin = 0.88, 0.35
+
+        for col in range(2):
+            # bg_color = colors[0] if col % 2 == 0 else colors[1]
+            subfig = fig.add_subfigure(gs[row, col])
+            # subfig.set_facecolor(bg_color)
+
+            # FIXED: Left/Right margins matched proportionally
+            subfig.subplots_adjust(
+                left=0.15, right=0.98, bottom=bottom_margin, top=top_margin, wspace=0.0)
+            axs = subfig.subplots(1, 4, sharex=True, sharey=True)
+
+            if col == 0:
+                subfig.suptitle(
+                    SUBFIG_TITLES[row], x=0.15, y=0.98, fontweight='bold', ha='left')
+
+            for i, ax in enumerate(axs):
+                if col == 0:
+                    if i == 0:
+                        ax.plot(all_loop_collection[row].F, all_loop_collection[row]
+                                .R, color='red', linewidth=0.75, alpha=0.75)
+                        ax.plot(all_loop_collection[row].F, all_loop_collection[row]
+                                .X, color='blue', linewidth=0.75, alpha=0.75)
+                        ax.set_facecolor(bg_color[0])
+                    elif i == 3:
+                        ml = median_loop(all_loops[row])
+                        ax.plot(ml.F, ml.R, color='red', linewidth=1.5)
+                        ax.plot(ml.F, ml.X, color='blue', linewidth=1.5)
+                        ax.plot([ml.F[-1], ml.F[0]], [ml.R[-1], ml.R[0]], color='red', linewidth=1.5)
+                        ax.plot([ml.F[-1], ml.F[0]], [ml.X[-1], ml.X[0]], color='blue', linewidth=1.5)
+                        ax.set_facecolor(bg_color[1])
+                        if row == 2:
+                            ax.set_xlabel(x_label ,
+                                          fontsize=8, labelpad=8)
+                    else:
+                        ax.plot(all_loops[row][i].F, all_loops[row]
+                                [i].R, color='red', linewidth=1.5)
+                        ax.plot(all_loops[row][i].F, all_loops[row]
+                                [i].X, color='blue', linewidth=1.5)
+                        ax.plot([all_loops[row][i].F[-1],all_loops[row][i].F[0]], [all_loops[row][i].R[-1], all_loops[row][i].R[0]], color='red', linewidth=1.5)
+                        ax.plot([all_loops[row][i].F[-1],all_loops[row][i].F[0]], [all_loops[row][i].X[-1], all_loops[row][i].X[0]], color='blue', linewidth=1.5)
+                    ax.set_xlim(-1.5, 1.5)
+
+                if col == 1:
+                    if i == 0:
+                        ax.plot(all_loop_collection[row].V, all_loop_collection[row]
+                                .R, color='red', linewidth=0.75, alpha=0.75)
+                        ax.plot(all_loop_collection[row].V, all_loop_collection[row]
+                                .X, color='blue', linewidth=0.75, alpha=0.75)
+                        ax.set_facecolor(bg_color[0])
+
+                    elif i == 3:
+                        ax.plot(ml.V, ml.R, color='red', linewidth=1.5)
+                        ax.plot(ml.V, ml.X, color='blue', linewidth=1.5)
+                        ax.plot([ml.V[-1],ml.V[0]], [ml.R[-1], ml.R[0]], color='red', linewidth=1.5)
+                        ax.plot([ml.V[-1],ml.V[0]], [ml.X[-1], ml.X[0]], color='blue', linewidth=1.5)
+                        ax.set_facecolor(bg_color[1])
+                        if row == 2:
+                            ax.set_xlabel(v_label,
+                                          fontsize=8, labelpad=8)
+                    else:
+                        ax.plot(all_loops[row][i].V, all_loops[row]
+                                [i].R, color='red', linewidth=1.5)
+                        ax.plot(all_loops[row][i].V, all_loops[row]
+                                [i].X, color='blue', linewidth=1.5)
+                        ax.plot([all_loops[row][i].V[-1],all_loops[row][i].V[0]], [all_loops[row][i].R[-1], all_loops[row][i].R[0]], color='red', linewidth=1.5)
+                        ax.plot([all_loops[row][i].V[-1],all_loops[row][i].V[0]], [all_loops[row][i].X[-1], all_loops[row][i].X[0]], color='blue', linewidth=1.5)
+                    ax.set_xlim(-0.25, 1.25)
+
+                ax.set_ylim(-5.5, 5)
+
+                if i == 0:
+                    ax.set_ylabel(y_title, fontsize=8,
+                                  fontweight='bold', labelpad=2)
+
+                if i == 0:
+                    ax.set_yticks([-4, 0, 4])
+                    ax.set_yticklabels([-4, 0, 4], fontsize=8)
+
+                if row < 2:
+                    ax.set_xticklabels([])
+                    if col == 0:
+                        ax.set_xticks([-1, 0, 1])
+                    else:
+                        ax.set_xticks([0, 1])
+                else:
+                    if col == 0:
+                        ax.set_xticks([-1, 0, 1])
+                        ax.set_xticklabels([-1, 0, 1], fontsize=8)
+                    else:
+                        ax.set_xticks([0, 1])
+                        ax.set_xticklabels([0, 1], fontsize=8)
+
+    plt.savefig('IB_DL/images/patient_illustration.pdf',
+                format='pdf', dpi=300, bbox_inches='tight')
+    print("Plot saved to 'IB_DL/images/patient_illustration.pdf'")
 
 
 def aug_illustration():

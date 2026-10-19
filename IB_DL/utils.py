@@ -1,4 +1,5 @@
 import ast
+import importlib
 from email.header import Header
 from pathlib import Path
 from typing import Sequence
@@ -235,6 +236,23 @@ def set_seed(seed: int):
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
+
+
+def import_ibosc(module: str):
+    """Imports IB_DL.IBOsc.<module>.
+
+    IBOsc holds the handcrafted intra-breath features of the classical pipeline
+    and is not part of the public repository. Only the FCNN baseline of Table 6
+    (features_exp) and Fig. 2 need it.
+    """
+    try:
+        return importlib.import_module(f"IB_DL.IBOsc.{module}")
+    except ModuleNotFoundError as e:
+        if e.name is not None and e.name.startswith("IB_DL.IBOsc"):
+            raise ModuleNotFoundError(
+                "This feature needs the IB_DL.IBOsc package (handcrafted features of the "
+                "classical pipeline), which is not included in this repository.") from e
+        raise
 
 
 def seed_worker(worker_id):

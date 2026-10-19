@@ -84,6 +84,14 @@ def train_loop(model: nn.Module,
             val_size = len(val_loader.dataset)  # type: ignore
             log_file.write_params({"val_size": val_size})
 
+    # Full pass over the training data before the first epoch. Its labels are not
+    # used, but it advances the sampler and augmentation RNG exactly as the runs
+    # reported in the paper did; removing it changes every subsequent batch.
+    model.train()
+    train_labels = []
+    for batch, (X, y) in enumerate(dataloader):
+        train_labels.extend(y)  # type: ignore
+
     # Prepare Labels and Criterion
     class_labels = params.get("class_labels") or DefaultLabels().class_labels
     criterion = LabelCrossEntropyLoss(class_labels=class_labels, class_weights=None)

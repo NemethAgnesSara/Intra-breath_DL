@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from torch.utils.data import WeightedRandomSampler
 
-from IB_DL.utils import seed_worker,  MEASURENT_FILES
+from IB_DL.utils import seed_worker, set_seed, MEASURENT_FILES
 from torchvision.transforms import v2
 
 
@@ -286,6 +286,14 @@ class IBDataset(Dataset[tuple[Loop, str]]):
         train_indices, test_indices, val_indices = self.split_patient_dataset_indices(
             ttv_ratio)
         self.test_indices = test_indices
+        # Keep the patient-level split (indices into ``patient_loops``) around so
+        # the exact train/test/val partition can be exported, regardless of
+        # loop_set mode.
+        self.patient_split_indices: dict[str, list[int]] = {
+            "train": list(train_indices),
+            "test": list(test_indices),
+            "val": list(val_indices),
+        }
 
         if not self.loop_set:
             train_subset = torch.utils.data.Subset(self, train_indices)
@@ -325,6 +333,47 @@ class IBDataset(Dataset[tuple[Loop, str]]):
                     test_set, range(len(test_set)))
 
         return [train_subset, test_subset, val_subset]
+
+    def patient_ids(self, indices: Sequence[int]) -> list:
+        """Map patient indices (into ``patient_loops``) to their raw patient IDs.
+
+        Values are coerced to native Python types so they serialise cleanly.
+        """
+        ids = []
+        for i in indices:
+            pid = self.patient_loops[i][0].patient_id
+            ids.append(pid.item() if hasattr(pid, "item") else pid)
+        return ids
+
+    def save_patient_split(self, path: str | Path,
+                           extra: Optional[dict] = None) -> dict:
+        """Write the current train/test/val split as patient IDs to ``path`` (JSON).
+
+        Requires :meth:`split_data_subsets` (or :meth:`split_patient_dataset_indices`
+        via it) to have been called first so ``patient_split_indices`` exists.
+        The saved lists preserve split membership; IDs within each split are
+        sorted for stable diffing against another framework's split.
+        """
+        import json
+        if not hasattr(self, "patient_split_indices"):
+            raise RuntimeError(
+                "No split available; call split_data_subsets() before save_patient_split().")
+        split = {
+            name: sorted(self.patient_ids(idxs))
+            for name, idxs in self.patient_split_indices.items()
+        }
+        payload = {
+            "class_labels": list(self.class_labels),
+            "counts": {name: len(ids) for name, ids in split.items()},
+            **split,
+        }
+        if extra:
+            payload.update(extra)
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+        return payload
 
     def plot_histogram(self):
         """
@@ -441,6 +490,17 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
         tuple[DataLoader, DataLoader, DataLoader] : DataLoader for train (70%), validation(10%) and test (20%), and the full dataset to get its properties.
     """
     from IB_DL.transformations import build_transformations
+    # The split is drawn from the global RNG, which callers seed with
+    # params["seed"], so by default one seed fixes both the split and the
+    # initialisation. With split_seed set, the split is drawn from split_seed
+    # instead and the training seed is restored afterwards (Section VI-K).
+    split_seed = params.get("split_seed")
+    if isinstance(split_seed, str):
+        # From the CLI: a None default makes click type the option as text.
+        split_seed = None if split_seed in ("", "None") else int(split_seed)
+        params["split_seed"] = split_seed
+    if split_seed is not None:
+        set_seed(split_seed)
 
     ib_dataset = None
     file_path: str | Path | list[str | Path] = ""
@@ -465,9 +525,33 @@ def init_dataset(params: Dict) -> tuple[DataLoader, DataLoader, DataLoader, IBDa
 
     data_subsets = ib_dataset.split_data_subsets(
         ttv_ratio=params["ttv_ratio"])
+    if split_seed is not None:
+        # Sampling, augmentation and model initialisation follow the training
+        # seed, not the split seed.
+        set_seed(params["seed"])
+    effective_split_seed = split_seed if split_seed is not None else params["seed"]
+
+    # Optionally dump the exact patient-level split (train/test/val patient IDs).
+    if params.get("save_patient_split", False):
+        out_dir = params.get("output_dir", ".")
+        split_path = os.path.join(
+            out_dir, f"patient_split_seed{effective_split_seed}.json")
+        ib_dataset.save_patient_split(
+            split_path,
+            extra={"seed": params["seed"],
+                   "split_seed": effective_split_seed,
+                   "ttv_ratio": list(params["ttv_ratio"]),
+                   "loop_set": ib_dataset.loop_set})
+        print(f"Saved patient split to {split_path}")
 
     data_loaders = []
-    subset_targets = [data_subsets[0].dataset.all_annotations[idx]  # type: ignore
+    # In loop mode the subset indices address all_annotations, in patient mode
+    # (MedianLoops / ToMeasurements) they address annotations.
+    train_base_dataset = data_subsets[0].dataset
+    train_targets_source = (train_base_dataset.all_annotations  # type: ignore
+                            if train_base_dataset.loop_set  # type: ignore
+                            else train_base_dataset.annotations)  # type: ignore
+    subset_targets = [str(train_targets_source[idx])
                       for idx in data_subsets[0].indices]
     unique_classes = sorted(list(set(subset_targets)))
     class_to_idx = {cls_name: i for i, cls_name in enumerate(unique_classes)}

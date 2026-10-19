@@ -39,12 +39,46 @@ from IB_DL import utils
 from IB_DL.utils import get_optimizer
 from torchvision.transforms import v2
 from IB_DL.train import train_loop
-from IB_DL.experiments.default_exp.config import run_experiment as run_default_exp
 import pandas as pd
+import urllib.request
+from urllib.parse import quote
 
 DEFAULT_IMG_SIZE = 224
 DEFAULT_CHANNELS = 3
 LINE_WIDTH = 3  # Width of the drawn line/stroke
+
+QD_CLASSES = ["apple", "boomerang", "carrot", "cookie", "hot air balloon",
+              "mushroom", "onion", "pear", "sun", "wheel"]
+QD_URL = "https://storage.googleapis.com/quickdraw_dataset/full/simplified/{}.ndjson"
+QD_FILE_BYTES = 20 * 1024 * 1024
+
+
+def download_quickdraw(data_dir: Optional[str] = None) -> None:
+    """
+    Downloads the Quick, Draw! classes used for pretraining into <data_dir>/QuickDraw.
+
+    The pretraining in the paper used about the first 20 MB of each class's
+    simplified .ndjson file, so each download stops at the end of the line that
+    crosses 20 MiB. The files used for the published checkpoints came from an
+    earlier download of the same dataset; they share ~97% of their drawings with
+    these files but are not byte-identical.
+    """
+    data_dir = data_dir or str(PathsConfig.data_dir)
+    out_dir = os.path.join(data_dir, "QuickDraw")
+    os.makedirs(out_dir, exist_ok=True)
+    for cls in QD_CLASSES:
+        out_file = os.path.join(out_dir, f"{cls}.ndjson")
+        if os.path.exists(out_file):
+            continue
+        written = 0
+        with urllib.request.urlopen(QD_URL.format(quote(cls)), timeout=60) as response, \
+                open(out_file, "wb") as f:
+            for line in response:
+                f.write(line)
+                written += len(line)
+                if written >= QD_FILE_BYTES:
+                    break
+        print(f"Downloaded {cls}: {written} bytes")
 
 
 def parse_line(ndjson_line: str) -> tuple[np.ndarray, str]:
@@ -543,47 +577,51 @@ if __name__ == "__main__":
     # 1. OPTIONAL: Generate visualization dataset samples
     # create_example_imgs_1_pc()
 
-    # 2. EXAMPLE TRAINING BLOCK
-    # This block provides a single, clean example of how to execute the training pipeline.
+    # 2. PRETRAINING FOR TABLE 3
+    # The two checkpoints behind the Quick, Draw! rows of Table 3 (random and
+    # ImageNet initialisation), with the settings logged by the published runs.
+    # models.py loads them from result/QD_resnet50.pt and
+    # result/QD_resnet50_pretrained.pt (the 'QD_resnet50' and
+    # 'QD_pretrained_resnet50' models of the pre_train experiment).
 
+    download_quickdraw()
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "result")
     os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
 
-    prefix = "QD_resnet18"
-    suffix = f"_{date.today().isoformat()}"
+    for model in ["resnet50", "resnet50_pretrained"]:
+        prefix = f"QD_{model}"
+        suffix = f"_{date.today().isoformat()}"
 
-    example_train_params = {
-        "model": "resnet18",
-        "optimizer": "SGD",
-        "epochs": 100,
-        "batch_size": 32,
-        "learning_rate": 0.01,
-        "output_dir": output_dir,
-        "log_level": "INFO",
-        "seed": 42,
-        "gpu": torch.cuda.is_available(),
-        "log_filename": os.path.join(output_dir, f"{prefix}_log_{suffix}.log"),
-        "prefix": prefix,
-        "suffix": suffix,
-        "ttv_ratio": [0.7, 0.2, 0.1],
-        "num_workers": 12,
-        "persistent_workers": True,
-        "prefetch_factor": 2,
-        "output_items": ['loss_plot', 'acc_plot', 'conf_matrix', 'cams'],
-        "early_stop": True,
-        "early_counter": 3,
-        "eval_interval": 3,
-        "class_labels": ["sun", "wheel", "pear", "onion", "mushroom", "hot air balloon",
-                         "cookie", "apple", "carrot", "boomerang"],
-        "test_aggregation": 'all',
-        "transformations": [{"name": "LinesToImage"}],
-        "best_model_filename": os.path.join(output_dir, f"{prefix}_log_{suffix}.pt"),
-        "image_size": DEFAULT_IMG_SIZE,
-        "lw": LINE_WIDTH
-    }
+        train_params = {
+            "model": model,
+            "optimizer": "SGD",
+            "epochs": 100,
+            "batch_size": 32,
+            "learning_rate": 0.001,
+            "output_dir": output_dir,
+            "log_level": "INFO",
+            "seed": 42,
+            "gpu": torch.cuda.is_available(),
+            "log_filename": os.path.join(output_dir, f"{prefix}_log_{suffix}.log"),
+            "prefix": prefix,
+            "suffix": suffix,
+            "num_workers": 12,
+            "persistent_workers": True,
+            "prefetch_factor": 2,
+            "output_items": ['loss_plot', 'acc_plot', 'conf_matrix', 'cams'],
+            "early_stop": True,
+            "early_counter": 3,
+            "eval_interval": 3,
+            "class_labels": QD_CLASSES,
+            "test_aggregation": 'all',
+            "transformations": [{"name": "LinesToImage"}],
+            "best_model_filename": os.path.join(output_dir, f"{prefix}.pt"),
+            "image_size": DEFAULT_IMG_SIZE,
+            "lw": LINE_WIDTH
+        }
 
-    print("\n--- Starting QuickDraw ResNet18 Training Example ---")
-    pretrain_qd(example_train_params)
+        print(f"\n--- Starting QuickDraw {model} pretraining ---")
+        pretrain_qd(train_params)
 
     # 3. EXAMPLE EVALUATION BLOCK
     # eval_qd_model(log_file=f"{_REPO_ROOT}/IB_DL/SIN_QD/results/QD_resnet18_log__2025-11-25.log")

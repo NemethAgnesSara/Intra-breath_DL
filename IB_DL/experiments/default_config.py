@@ -21,6 +21,10 @@ class DefaultParams:
             os.path.abspath(__file__))) + "/result"
         self.log_level: str = 'INFO'
         self.seed: int = 42
+        # Seed for the patient-level train/val/test split only. None means
+        # "same as seed", which is how every run behaved before this existed.
+        # Set it to hold the split fixed while seed varies the initialisation.
+        self.split_seed: Optional[int] = None
         self.gpu: bool = torch.cuda.is_available()
         self.resume: bool = False
         self.verbose: bool = True
@@ -29,6 +33,9 @@ class DefaultParams:
         self.class_labels: Optional[str] = None
         self.all_measurements: bool = True
         self.ttv_ratio: list[float] = [0.6, 0.2, 0.2]
+        # When True, init_dataset() writes the train/test/val patient-ID split to
+        # <output_dir>/patient_split_seed<seed>.json.
+        self.save_patient_split: bool = False
         self.output_items: list[str] = ['loss_plot',
                                         'acc_plot',
                                         'conf_matrix',
