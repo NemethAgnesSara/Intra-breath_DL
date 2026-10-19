@@ -75,28 +75,9 @@ This will automatically run and evaluate the experiment. Logs, checkpoints and `
 
 ## Reproducing the Paper
 
-Each experiment's defaults are the settings logged by the runs reported in the paper, so the command alone regenerates the corresponding runs.
-
-| Paper | Experiment (`--name`) | Tables and figures from the results |
-|---|---|---|
-| Fig. 6 | `architecture_exp` | `visualize.plot_architecture_matrix_2x3(<run>/flexicnn, <run>/linearcnn, out)` |
-| Fig. 8 | `augmentation_exp` | `visualize.plot_augmentation_matrix_3x3(<run>/resnet50_pretrained, <run>/flexicnn, <run>/linearcnn, out)` |
-| Table 2 | `efficient_exp` | `test_results.csv` |
-| Table 3 | `pre_train` (run the *Quick, Draw!* pre-training first, see below) | `test_results.csv` |
-| Fig. 12 | `linewidth_exp` | `visualize.plot_lw_plot_single_column(<run>)` |
-| Table 4 | `channel_exp` | `test_results.csv` |
-| Fig. 13 | `gradient_channels`, `gradient` (three-channel configuration) | `python -m IB_DL.experiments.gradient_channels.analysis <date>`, `... .gradient_channels.figure_sign_consistency --date <date>`, `... .gradient.analysis <date>` |
-| Fig. 14, Tables 5 and 7 | `combined_exp` | `python -m IB_DL.experiments.combined_exp.<script> --csv <run>/test_results.csv` with `figure_combined_summary`, `figure_top10_ranking`, `table_stats`, `table_top10` |
-| Table 6 | `features_exp` (requires `IB_DL/IBOsc/`, not included) | `test_results.csv` (FCNN rows); `combined_exp.compare_cml` compares the best configuration with the classical baseline |
-| Section VI-K | `seed_split` | `python -m IB_DL.experiments.seed_split.ensemble <run> --split-seed <n>` |
-
-`<run>` is the result directory of the experiment, `<date>` its name under `result/`.
-
-Illustrations: Fig. 2 `visualize.patient_illustration_v2()` (requires `IB_DL/IBOsc/` and reads the raw measurements of three example patients from `IB_DL/data/helpers/`), Fig. 3 `visualize.visualize_scales(25753, 39000, 2000)`, Fig. 4 `visualize.augmentation_illustration()`, Fig. 7 `visualize.plot_augmentation_strength_vs_prob()`, Fig. 10 `SIN_QD.quick_draw.create_example_imgs_1_pc()`, Fig. 11 `visualize.sweep_linewidts([1/128, 4/128, 8/128], [64, 128, 224])`. They are written to `IB_DL/images/`.
-
 **Quick, Draw! pre-training (Table 3).** `python -m IB_DL.SIN_QD.quick_draw` downloads the ten classes into `IB_DL/data/QuickDraw/` and trains the two ResNet-50 checkpoints (random and ImageNet initialisation) that `pre_train` loads from `IB_DL/SIN_QD/result/`. The published checkpoints were trained on an earlier download of the same dataset that is not byte-identical with the current files.
 
-**Reproducibility.** Training is deterministic for a given seed: data splitting, sampling, augmentation and initialisation are seeded, and repeating a run reproduces its log exactly. Augmentation is drawn inside the data-loader workers, so the same numbers also require the same `num_workers`; the defaults use the value of the published runs. Runs made before seeded data loading was introduced (the augmentation, EfficientNet, *Quick, Draw!* and transfer learning experiments) reproduce the experimental design but not the exact numbers. The logs of the EfficientNet-B1, ShuffleNet, VGG-13 and ViT-B-16 runs of the combined experiment were not kept; `combined_exp` uses the image size and line-width scaling of the code version they were run with. The published runs were made on an NVIDIA GeForce RTX 3090; exact reproduction was verified with PyTorch 2.7.1.
+**Reproducibility.** Training is deterministic for a given seed: data splitting, sampling, augmentation and initialisation are seeded, and repeating a run reproduces its log exactly. Augmentation is drawn inside the data-loader workers, so the same numbers also require the same `num_workers`; the defaults use the value of the published runs. All experiments were ran using seeds 1 to 5. The published runs were made on an NVIDIA GeForce RTX 3090; exact reproduction was verified with PyTorch 2.7.1.
 
 ## Citation
 
